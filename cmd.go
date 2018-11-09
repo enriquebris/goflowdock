@@ -4,7 +4,7 @@ import "regexp"
 
 const (
 	CMDTypeRegex = "regex"
-	CMDTypeword  = "word"
+	CMDTypeWord  = "word"
 )
 
 // CMDHandler is the function handler
@@ -14,10 +14,18 @@ type CMDHandler func(cmd CMD, entry Entry, cmdContent string)
 type CMD struct {
 	PatternType   string
 	Pattern       string
+	Description   string
+	Required      bool
 	compiledRegex *regexp.Regexp
 	Handler       CMDHandler
 	ErrorHandler  CMDHandler
 	SubCommands   []CMD
+	Params        []CMD
+}
+
+// AddSubCMD adds a sub command
+func (st *CMD) AddSubCMD(sub CMD) {
+	st.SubCommands = append(st.SubCommands, sub)
 }
 
 // ***********************************************************************************************

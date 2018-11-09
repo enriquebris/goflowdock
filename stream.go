@@ -61,6 +61,10 @@ func (st *StreamManager) AddCommand(cmd CMD) error {
 		cmd.compiledRegex = compiledPattern
 	}
 
+	if cmd.PatternType == CMDTypeWord {
+		cmd.Pattern = strings.ToLower(cmd.Pattern)
+	}
+
 	// save the command
 	st.commands = append(st.commands, cmd)
 
@@ -141,9 +145,11 @@ func (st *StreamManager) matchCMDs(cmds []CMD, content string) (CMD, bool, strin
 			// TODO ::: get the extracontent from the regex
 
 		// first word
-		case CMDTypeword:
-			match = words[0] == cmd.Pattern
-			extraContent = content[len(words[0]):]
+		case CMDTypeWord:
+			match = strings.ToLower(words[0]) == cmd.Pattern
+			if match {
+				extraContent = content[len(words[0]):]
+			}
 		}
 
 		if match {
@@ -152,15 +158,26 @@ func (st *StreamManager) matchCMDs(cmds []CMD, content string) (CMD, bool, strin
 			extraContent = strings.TrimSpace(extraContent)
 
 			// return CMD if no more content to parse
+			// TODO :: check for required subCommands or Params
 			if extraContent == "" {
 				return cmd2ret, true, content, nil
 			}
 
+			checkForParams := true
+
+			// check for subCommands
 			if len(cmd.SubCommands) > 0 {
+				// do not check for params
+				checkForParams = false
 				extraCmd2ret, useHandler, content2, err2 := st.matchCMDs(cmd.SubCommands, extraContent)
 				if err2 == nil {
 					return extraCmd2ret, useHandler, content2, nil
 				}
+			}
+
+			// check for params
+			if checkForParams {
+
 			}
 
 			// use errorHandler instead of handler
