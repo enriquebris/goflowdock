@@ -8,15 +8,15 @@ const (
 )
 
 // CMDHandler is the function handler
-type CMDHandler func(cmd CMD, entry Entry, cmdContent string)
+type CMDHandler func(cmd CMD, pattern string, entry Entry, cmdContent string)
 
 // CMD command
 type CMD struct {
 	PatternType   string
-	Pattern       string
+	Pattern       []string
 	Description   string
 	Required      bool
-	compiledRegex *regexp.Regexp
+	compiledRegex []*regexp.Regexp
 	Handler       CMDHandler
 	ErrorHandler  CMDHandler
 	SubCommands   []CMD
@@ -26,6 +26,15 @@ type CMD struct {
 // AddSubCMD adds a sub command
 func (st *CMD) AddSubCMD(sub CMD) {
 	st.SubCommands = append(st.SubCommands, sub)
+}
+
+// addCompiledRegex adds a new compiled regex (that matches a pattern)
+func (st *CMD) addCompiledRegex(regx *regexp.Regexp) {
+	if st.compiledRegex == nil {
+		st.compiledRegex = make([]*regexp.Regexp, 0)
+	}
+
+	st.compiledRegex = append(st.compiledRegex, regx)
 }
 
 // ***********************************************************************************************
