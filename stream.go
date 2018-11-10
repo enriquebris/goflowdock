@@ -51,18 +51,23 @@ func (st *StreamManager) initialize(authToken string, errorChan chan error) {
 func (st *StreamManager) AddCommand(cmd CMD) error {
 	// compile && save the regex pattern
 	if cmd.PatternType == CMDTypeRegex {
-		// compile the regex pattern
-		compiledPattern, err := regexp.Compile(cmd.Pattern)
-		if err != nil {
-			return err
-		}
+		// compile the regex patterns
+		for i := 0; i < len(cmd.Pattern); i++ {
+			compiledPattern, err := regexp.Compile(cmd.Pattern[i])
+			if err != nil {
+				return err
+			}
 
-		// save the compiled regex pattern
-		cmd.compiledRegex = compiledPattern
+			// save the compiled regex pattern
+			cmd.addCompiledRegex(compiledPattern)
+		}
 	}
 
 	if cmd.PatternType == CMDTypeWord {
-		cmd.Pattern = strings.ToLower(cmd.Pattern)
+		// lowercase patterns
+		for i := 0; i < len(cmd.Pattern); i++ {
+			cmd.Pattern[i] = strings.ToLower(cmd.Pattern[i])
+		}
 	}
 
 	// save the command
@@ -100,18 +105,18 @@ func (st *StreamManager) Listen(streamURL string) error {
 		var entry Entry
 		err = json.Unmarshal(line, &entry)
 
-		cmd, useHandler, cmdContent, err := st.matchCMDs(st.commands, entry.Content)
+		cmd, pattern, useHandler, cmdContent, err := st.matchCMDs(st.commands, entry.Content)
 		if err != nil {
 			if st.errorChan != nil {
 				st.errorChan <- err
 			}
 		} else {
 			if useHandler && cmd.Handler != nil {
-				cmd.Handler(cmd, entry, cmdContent)
+				cmd.Handler(cmd, pattern, entry, cmdContent)
 			}
 
 			if !useHandler && cmd.ErrorHandler != nil {
-				cmd.ErrorHandler(cmd, entry, cmdContent)
+				cmd.ErrorHandler(cmd, pattern, entry, cmdContent)
 			}
 		}
 	}
@@ -120,19 +125,23 @@ func (st *StreamManager) Listen(streamURL string) error {
 // matchCMDs finds for the best CMD (command) match.
 // Returns CMD, bool, err
 // CMD		==> best match command
+// string	==> pattern that matches
 // bool		==> true (use CMD.handler), false (use CMD.ErrorHandler)
 // string 	==> content
 // err		==> error
-func (st *StreamManager) matchCMDs(cmds []CMD, content string) (CMD, bool, string, error) {
+func (st *StreamManager) matchCMDs(cmds []CMD, content string) (CMD, string, bool, string, error) {
 	content = strings.TrimSpace(content)
 	if content == "" {
-		return CMD{}, false, content, NewCMDError(CMDErrorTypeNoCommand, fmt.Sprintf("no commands for '%v'", content))
+		return CMD{}, "", false, content, NewCMDError(CMDErrorTypeNoCommand, fmt.Sprintf("no commands for '%v'", content))
 	}
 
 	// split the content into words separated by blank spaces
 	words := strings.Split(content, " ")
 
-	var cmd2ret CMD
+	var (
+		cmd2ret      CMD
+		patternMatch string
+	)
 
 	for _, cmd := range cmds {
 		match := false
@@ -141,14 +150,28 @@ func (st *StreamManager) matchCMDs(cmds []CMD, content string) (CMD, bool, strin
 		switch cmd.PatternType {
 		// regex
 		case CMDTypeRegex:
-			match = cmd.compiledRegex.MatchString(content)
-			// TODO ::: get the extracontent from the regex
+			for i := 0; i < len(cmd.compiledRegex); i++ {
+				match = cmd.compiledRegex[i].MatchString(content)
+
+				if match {
+					// saved the pattern that matches
+					patternMatch = cmd.Pattern[i]
+					break
+					// TODO ::: get the extracontent from the regex
+				}
+			}
 
 		// first word
 		case CMDTypeWord:
-			match = strings.ToLower(words[0]) == cmd.Pattern
-			if match {
-				extraContent = content[len(words[0]):]
+			for i := 0; i < len(cmd.Pattern); i++ {
+				match = strings.ToLower(words[0]) == cmd.Pattern[i]
+				if match {
+					// saved the pattern that matches
+					patternMatch = cmd.Pattern[i]
+					// extra content to keep parsing
+					extraContent = content[len(words[0]):]
+					break
+				}
 			}
 		}
 
@@ -160,7 +183,7 @@ func (st *StreamManager) matchCMDs(cmds []CMD, content string) (CMD, bool, strin
 			// return CMD if no more content to parse
 			// TODO :: check for required subCommands or Params
 			if extraContent == "" {
-				return cmd2ret, true, content, nil
+				return cmd2ret, patternMatch, true, content, nil
 			}
 
 			checkForParams := true
@@ -169,9 +192,9 @@ func (st *StreamManager) matchCMDs(cmds []CMD, content string) (CMD, bool, strin
 			if len(cmd.SubCommands) > 0 {
 				// do not check for params
 				checkForParams = false
-				extraCmd2ret, useHandler, content2, err2 := st.matchCMDs(cmd.SubCommands, extraContent)
+				extraCmd2ret, patternMatch2, useHandler, content2, err2 := st.matchCMDs(cmd.SubCommands, extraContent)
 				if err2 == nil {
-					return extraCmd2ret, useHandler, content2, nil
+					return extraCmd2ret, patternMatch2, useHandler, content2, nil
 				}
 			}
 
@@ -181,10 +204,10 @@ func (st *StreamManager) matchCMDs(cmds []CMD, content string) (CMD, bool, strin
 			}
 
 			// use errorHandler instead of handler
-			return cmd2ret, false, extraContent, nil
+			return cmd2ret, patternMatch, false, extraContent, nil
 		}
 
 	}
 
-	return CMD{}, false, content, NewCMDError(CMDErrorTypeNoCommand, fmt.Sprintf("no commands for '%v'", content))
+	return CMD{}, "", false, content, NewCMDError(CMDErrorTypeNoCommand, fmt.Sprintf("no commands for '%v'", content))
 }
