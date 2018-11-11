@@ -1,6 +1,7 @@
 package goflowdock
 
 import (
+	"fmt"
 	"regexp"
 	"strconv"
 )
@@ -9,11 +10,12 @@ const (
 	CMDTypeRegex = "regex"
 	CMDTypeWord  = "word"
 
-	CMDHandlerTypeDefault       = "handler.default"
-	CMDHandlerTypeError         = "handler.error"
-	CMDHandlerTypeParams        = "handler.params"
-	CMDHandlerTypeParamsMissing = "handler.params.missing"
-	CMDHandlerTypeParamsExtra   = "handler.params.extra"
+	CMDHandlerTypeDefault         = "handler.default"
+	CMDHandlerTypeError           = "handler.error"
+	CMDHandlerTypeParams          = "handler.params"
+	CMDHandlerTypeParamsWrongType = "handler.params.wrong.type"
+	CMDHandlerTypeParamsMissing   = "handler.params.missing"
+	CMDHandlerTypeParamsExtra     = "handler.params.extra"
 )
 
 // CMDHandler is the function handler
@@ -33,18 +35,21 @@ type CMDHandler func(cmd CMD, pattern string, entry Entry, cmdContent string, ha
 
 // CMD command
 type CMD struct {
-	PatternType          string
-	Pattern              []string
-	Description          string
-	Required             bool
-	compiledRegex        []*regexp.Regexp
-	Handler              CMDHandler
-	HandlerError         CMDHandler
-	HandlerParams        CMDHandler
-	HandlerParamsMissing CMDHandler
-	HandlerParamsExtra   CMDHandler
-	SubCommands          []CMD
-	Params               []CMDParam
+	PatternType            string
+	Pattern                []string
+	Description            string
+	Required               bool
+	compiledRegex          []*regexp.Regexp
+	Handler                CMDHandler
+	HandlerError           CMDHandler
+	HandlerParams          CMDHandler
+	HandlerParamsWrongType CMDHandler
+	HandlerParamsMissing   CMDHandler
+	HandlerParamsExtra     CMDHandler
+	SubCommands            []CMD
+	Params                 []CMDParam
+	params2map             bool
+	mpParams               map[string]CMDParam
 }
 
 // AddSubCMD adds a sub command
@@ -61,15 +66,66 @@ func (st *CMD) addCompiledRegex(regx *regexp.Regexp) {
 	st.compiledRegex = append(st.compiledRegex, regx)
 }
 
+// GetParamByID returns a CMDParam given its ID
+func (st *CMD) GetParamByID(id string) (CMDParam, error) {
+	if !st.params2map {
+		st.convertParamsToMap()
+	}
+
+	if param, ok := st.mpParams[id]; ok {
+		return param, nil
+	}
+
+	return CMDParam{}, fmt.Errorf("No param '%v'", id)
+}
+
+// GetParamByIndex returns a CMDParam given its index
+func (st *CMD) GetParamByIndex(index int) (CMDParam, error) {
+	if index >= len(st.Params) {
+		return CMDParam{}, fmt.Errorf("Index out of bounds: %v", index)
+	}
+
+	return st.Params[index], nil
+}
+
+// convertParamsToMap converts Params ([]CMDParam) to a map[string]CMDParam
+func (st *CMD) convertParamsToMap() {
+	st.mpParams = make(map[string]CMDParam)
+	for i := 0; i < len(st.Params); i++ {
+		st.mpParams[st.Params[i].ID] = st.Params[i]
+	}
+
+	st.params2map = true
+}
+
 // ***********************************************************************************************
 // **  CMDParam  *********************************************************************************
 // ***********************************************************************************************
 
+const (
+	CMDParamTypeInt = "int"
+)
+
 type CMDParam struct {
 	ID          string
 	Description string
+	Type        string
 	Required    bool
 	Value       string
+}
+
+// isExpectedType verifies whether the param's type is the expected.
+func (st *CMDParam) isExpectedType() bool {
+	switch st.Type {
+	case "":
+		return true
+
+	case CMDParamTypeInt:
+		_, err := st.GetIntValue()
+		return err == nil
+	}
+
+	return false
 }
 
 // GetIntValue return the int value

@@ -128,6 +128,11 @@ func (st *StreamManager) Listen(streamURL string) error {
 					cmd.HandlerParams(cmd, pattern, entry, cmdContent, handlerType)
 				}
 
+			case CMDHandlerTypeParamsWrongType:
+				if cmd.HandlerParamsWrongType != nil {
+					cmd.HandlerParamsWrongType(cmd, pattern, entry, cmdContent, handlerType)
+				}
+
 			case CMDHandlerTypeParamsMissing:
 				if cmd.HandlerParamsMissing != nil {
 					cmd.HandlerParamsMissing(cmd, pattern, entry, cmdContent, handlerType)
@@ -221,7 +226,13 @@ func (st *StreamManager) matchCMDs(cmds []CMD, content string) (CMD, string, str
 				for i := 0; i < len(cmd.Params); i++ {
 					if i < len(words)-1 {
 						cmd.Params[i].Value = words[i+1]
+						// parameter type checking
+						if !cmd.Params[i].isExpectedType() {
+							// TODO ::: Pass the wrong param
+							return cmd2ret, patternMatch, CMDHandlerTypeParamsWrongType, content, nil
+						}
 					} else {
+						// parameter required checking
 						if cmd.Params[i].Required {
 							// return insufficient parameters handler
 							return cmd2ret, patternMatch, CMDHandlerTypeParamsMissing, content, nil
