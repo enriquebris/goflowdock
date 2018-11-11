@@ -5,6 +5,7 @@ import (
 	b64 "encoding/base64"
 	"encoding/json"
 	"fmt"
+	"log"
 	"net/http"
 	"regexp"
 	"strings"
@@ -105,18 +106,40 @@ func (st *StreamManager) Listen(streamURL string) error {
 		var entry Entry
 		err = json.Unmarshal(line, &entry)
 
-		cmd, pattern, useHandler, cmdContent, err := st.matchCMDs(st.commands, entry.Content)
+		cmd, pattern, handlerType, cmdContent, err := st.matchCMDs(st.commands, entry.Content)
 		if err != nil {
 			if st.errorChan != nil {
 				st.errorChan <- err
 			}
 		} else {
-			if useHandler && cmd.Handler != nil {
-				cmd.Handler(cmd, pattern, entry, cmdContent)
-			}
+			switch handlerType {
+			case CMDHandlerTypeDefault:
+				if cmd.Handler != nil {
+					cmd.Handler(cmd, pattern, entry, cmdContent, handlerType)
+				}
 
-			if !useHandler && cmd.ErrorHandler != nil {
-				cmd.ErrorHandler(cmd, pattern, entry, cmdContent)
+			case CMDHandlerTypeError:
+				if cmd.HandlerError != nil {
+					cmd.HandlerError(cmd, pattern, entry, cmdContent, handlerType)
+				}
+
+			case CMDHandlerTypeParams:
+				if cmd.HandlerParams != nil {
+					cmd.HandlerParams(cmd, pattern, entry, cmdContent, handlerType)
+				}
+
+			case CMDHandlerTypeParamsMissing:
+				if cmd.HandlerParamsMissing != nil {
+					cmd.HandlerParamsMissing(cmd, pattern, entry, cmdContent, handlerType)
+				}
+
+			case CMDHandlerTypeParamsExtra:
+				if cmd.HandlerParamsExtra != nil {
+					cmd.HandlerParamsExtra(cmd, pattern, entry, cmdContent, handlerType)
+				}
+
+			default:
+				log.Printf("Unknown CMDHandlerType: %v", handlerType)
 			}
 		}
 	}
@@ -126,13 +149,13 @@ func (st *StreamManager) Listen(streamURL string) error {
 // Returns CMD, bool, err
 // CMD		==> best match command
 // string	==> pattern that matches
-// bool		==> true (use CMD.handler), false (use CMD.ErrorHandler)
+// string	==> CMD handler type true, which handler type should be used
 // string 	==> content
 // err		==> error
-func (st *StreamManager) matchCMDs(cmds []CMD, content string) (CMD, string, bool, string, error) {
+func (st *StreamManager) matchCMDs(cmds []CMD, content string) (CMD, string, string, string, error) {
 	content = strings.TrimSpace(content)
 	if content == "" {
-		return CMD{}, "", false, content, NewCMDError(CMDErrorTypeNoCommand, fmt.Sprintf("no commands for '%v'", content))
+		return CMD{}, "", CMDHandlerTypeError, content, NewCMDError(CMDErrorTypeNoCommand, fmt.Sprintf("no commands for '%v'", content))
 	}
 
 	// split the content into words separated by blank spaces
@@ -178,13 +201,8 @@ func (st *StreamManager) matchCMDs(cmds []CMD, content string) (CMD, string, boo
 		if match {
 			cmd2ret = cmd
 
+			// get the extra content to parse (extra content == content - cmd)
 			extraContent = strings.TrimSpace(extraContent)
-
-			// return CMD if no more content to parse
-			// TODO :: check for required subCommands or Params
-			if extraContent == "" {
-				return cmd2ret, patternMatch, true, content, nil
-			}
 
 			checkForParams := true
 
@@ -199,15 +217,37 @@ func (st *StreamManager) matchCMDs(cmds []CMD, content string) (CMD, string, boo
 			}
 
 			// check for params
-			if checkForParams {
+			if checkForParams && len(cmd.Params) > 0 {
+				for i := 0; i < len(cmd.Params); i++ {
+					if i < len(words)-1 {
+						cmd.Params[i].Value = words[i+1]
+					} else {
+						if cmd.Params[i].Required {
+							// return insufficient parameters handler
+							return cmd2ret, patternMatch, CMDHandlerTypeParamsMissing, content, nil
+						}
+					}
+				}
 
+				// more parameters than expected
+				if len(words)-1 > len(cmd.Params) {
+					// return extra parameters handler
+					return cmd2ret, patternMatch, CMDHandlerTypeParamsExtra, content, nil
+				}
+
+				return cmd2ret, patternMatch, CMDHandlerTypeParams, content, nil
+			}
+
+			// return CMD if there is no more content to parse
+			if extraContent == "" {
+				return cmd2ret, patternMatch, CMDHandlerTypeDefault, content, nil
 			}
 
 			// use errorHandler instead of handler
-			return cmd2ret, patternMatch, false, extraContent, nil
+			return cmd2ret, patternMatch, CMDHandlerTypeError, extraContent, nil
 		}
 
 	}
 
-	return CMD{}, "", false, content, NewCMDError(CMDErrorTypeNoCommand, fmt.Sprintf("no commands for '%v'", content))
+	return CMD{}, "", CMDHandlerTypeError, content, NewCMDError(CMDErrorTypeNoCommand, fmt.Sprintf("no commands for '%v'", content))
 }
