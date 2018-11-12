@@ -16,6 +16,10 @@ const (
 	CMDHandlerTypeParamsWrongType = "handler.params.wrong.type"
 	CMDHandlerTypeParamsMissing   = "handler.params.missing"
 	CMDHandlerTypeParamsExtra     = "handler.params.extra"
+
+	CMDExtraDataParametersIncorrectType = "extra.data.parameters.incorrect.type"
+	CMDExtraDataParametersMissing       = "extra.data.parameters.missing"
+	CMDExtraDataParametersExtra         = "extra.data.parameters.extra"
 )
 
 // CMDHandler is the function handler
@@ -26,8 +30,9 @@ const (
 // pattern string		==> exact CMD pattern that matched
 // entry Entry			==> Related Flowdock entry
 // cmdContent string	==> Content to parse (original content - cmd)
+// extraData			==> Extra data related to the CMD
 // handlerType string	==> Indicates which handler type will be used and gives some extra data (parameters: ok, missing, extra)
-type CMDHandler func(cmd CMD, pattern string, entry Entry, cmdContent string, handlerType string)
+type CMDHandler func(cmd CMD, pattern string, entry Entry, cmdContent string, extraData map[string]interface{}, handlerType string)
 
 // ***********************************************************************************************
 // **  CMD  **************************************************************************************
