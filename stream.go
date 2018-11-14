@@ -106,7 +106,7 @@ func (st *StreamManager) Listen(streamURL string) error {
 		var entry Entry
 		err = json.Unmarshal(line, &entry)
 
-		cmd, pattern, handlerType, cmdContent, extraData, err := st.matchCMDs(st.commands, entry.Content)
+		cmd, pattern, handlerType, cmdContent, extraData, err := st.matchCMDs(st.commands, entry.Content, entry)
 		if err != nil {
 			if st.errorChan != nil {
 				st.errorChan <- err
@@ -121,6 +121,11 @@ func (st *StreamManager) Listen(streamURL string) error {
 			case CMDHandlerTypeError:
 				if cmd.HandlerError != nil {
 					cmd.HandlerError(cmd, pattern, entry, cmdContent, extraData, handlerType)
+				}
+
+			case CMDHandlerTypeRestrictions:
+				if cmd.HandlerRestrictions != nil {
+					cmd.HandlerRestrictions(cmd, pattern, entry, cmdContent, extraData, handlerType)
 				}
 
 			case CMDHandlerTypeParams:
@@ -158,7 +163,7 @@ func (st *StreamManager) Listen(streamURL string) error {
 // string				==> content
 // map[string][string]	==> extra information related to the cmd
 // err		==> error
-func (st *StreamManager) matchCMDs(cmds []CMD, content string) (CMD, string, string, string, map[string]interface{}, error) {
+func (st *StreamManager) matchCMDs(cmds []CMD, content string, entry Entry) (CMD, string, string, string, map[string]interface{}, error) {
 	content = strings.TrimSpace(content)
 	if content == "" {
 		return CMD{}, "", CMDHandlerTypeError, content, nil, NewCMDError(CMDErrorTypeNoCommand, fmt.Sprintf("no commands for '%v'", content))
@@ -207,6 +212,11 @@ func (st *StreamManager) matchCMDs(cmds []CMD, content string) (CMD, string, str
 		if match {
 			cmd2ret = cmd
 
+			// check cmd restrictions
+			if !cmd2ret.canExecuteByFlows(entry) {
+				return cmd2ret, patternMatch, CMDHandlerTypeRestrictions, content, nil, nil
+			}
+
 			// get the extra content to parse (extra content == content - cmd)
 			extraContent = strings.TrimSpace(extraContent)
 
@@ -216,7 +226,7 @@ func (st *StreamManager) matchCMDs(cmds []CMD, content string) (CMD, string, str
 			if len(cmd.SubCommands) > 0 {
 				// do not check for params
 				checkForParams = false
-				extraCmd2ret, patternMatch2, useHandler, content2, extraData, err2 := st.matchCMDs(cmd.SubCommands, extraContent)
+				extraCmd2ret, patternMatch2, useHandler, content2, extraData, err2 := st.matchCMDs(cmd.SubCommands, extraContent, entry)
 				if err2 == nil {
 					return extraCmd2ret, patternMatch2, useHandler, content2, extraData, nil
 				}

@@ -13,6 +13,7 @@ const (
 	CMDHandlerTypeDefault         = "handler.default"
 	CMDHandlerTypeError           = "handler.error"
 	CMDHandlerTypeParams          = "handler.params"
+	CMDHandlerTypeRestrictions    = "handler.restrictions"
 	CMDHandlerTypeParamsWrongType = "handler.params.wrong.type"
 	CMDHandlerTypeParamsMissing   = "handler.params.missing"
 	CMDHandlerTypeParamsExtra     = "handler.params.extra"
@@ -20,6 +21,11 @@ const (
 	CMDExtraDataParametersIncorrectType = "extra.data.parameters.incorrect.type"
 	CMDExtraDataParametersMissing       = "extra.data.parameters.missing"
 	CMDExtraDataParametersExtra         = "extra.data.parameters.extra"
+
+	// CMD flow restriction, includes only the listed flows
+	CMDRestrictionFlowConceptInclude = "restriction.flow.include"
+	// CMD flow restriction, excludes the listed flows, allows all other flows
+	CMDRestrictionFlowConceptExclude = "restriction.flow.exclude"
 )
 
 // CMDHandler is the function handler
@@ -47,6 +53,7 @@ type CMD struct {
 	compiledRegex          []*regexp.Regexp
 	Handler                CMDHandler
 	HandlerError           CMDHandler
+	HandlerRestrictions    CMDHandler
 	HandlerParams          CMDHandler
 	HandlerParamsWrongType CMDHandler
 	HandlerParamsMissing   CMDHandler
@@ -55,6 +62,21 @@ type CMD struct {
 	Params                 []CMDParam
 	params2map             bool
 	mpParams               map[string]CMDParam
+	Restrictions           CMDRestriction
+}
+
+type CMDRestriction struct {
+	Flows []CMDRestrictionFlow
+}
+
+type CMDRestrictionFlow struct {
+	Concept string
+	Data    []CMDRestrictionFlowData
+}
+
+type CMDRestrictionFlowData struct {
+	ID   string
+	Name string
 }
 
 // AddSubCMD adds a sub command
@@ -101,6 +123,78 @@ func (st *CMD) convertParamsToMap() {
 	}
 
 	st.params2map = true
+}
+
+// GetReady get the CMD ready:
+// 	- Iterate over the Restrictions and fill all missing data (if possible)
+func (st *CMD) GetReady(flowManager *FlowManager) {
+	st.getReadyRestrictionsFlows(flowManager)
+}
+
+// getReadyRestrictionsFlows iterates over the flow's restrictions and fills the flow's IDS (if possible)
+func (st *CMD) getReadyRestrictionsFlows(flowManager *FlowManager) {
+	// get ready all the CMD's flows
+	for i := 0; i < len(st.Restrictions.Flows); i++ {
+		for c := 0; c < len(st.Restrictions.Flows[i].Data); c++ {
+			if st.Restrictions.Flows[i].Data[c].ID == "" && st.Restrictions.Flows[i].Data[c].Name != "" {
+				// get the flow ID
+				// TODO ::: cache && use cached results for the following search
+				if flow, err := flowManager.GetByName(st.Restrictions.Flows[i].Data[c].Name); err == nil {
+					st.Restrictions.Flows[i].Data[c].ID = flow.ID
+				}
+			}
+		}
+	}
+
+	// get ready all the CMD's subCMDs
+	for i := 0; i < len(st.SubCommands); i++ {
+		st.SubCommands[i].GetReady(flowManager)
+	}
+
+}
+
+// CanExecute returns true whether the CMD can be executed. It verifies all restrictions.
+func (st *CMD) CanExecute(entry Entry) (bool, error) {
+	canExecute := true
+
+	// check flows restrictions
+	canExecute = st.canExecuteByFlows(entry)
+
+	return canExecute, nil
+}
+
+// canExecuteByFlows verifies all Flow restrictions
+func (st *CMD) canExecuteByFlows(entry Entry) bool {
+	canExecute := true
+
+	if len(st.Restrictions.Flows) > 0 {
+		for i := 0; i < len(st.Restrictions.Flows); i++ {
+			switch st.Restrictions.Flows[i].Concept {
+			case CMDRestrictionFlowConceptInclude:
+				canExecute = false
+				for c := 0; c < len(st.Restrictions.Flows[i].Data); c++ {
+					if entry.Flow == st.Restrictions.Flows[i].Data[c].ID {
+						canExecute = true
+						break
+					}
+				}
+
+			case CMDRestrictionFlowConceptExclude:
+				canExecute = true
+				for c := 0; c < len(st.Restrictions.Flows[i].Data); c++ {
+					if entry.Flow == st.Restrictions.Flows[i].Data[c].ID {
+						canExecute = false
+
+						// TODO ::: Return a text message saying why the CMD cannot be executed
+
+						break
+					}
+				}
+			}
+		}
+	}
+
+	return canExecute
 }
 
 // ***********************************************************************************************
