@@ -41,9 +41,8 @@ type Flow struct {
 }
 
 type FlowManager struct {
-	token  string
-	flows  []Flow
-	mpByID map[string]Flow
+	token string
+	flows []Flow
 }
 
 func NewFlowManager(token string) *FlowManager {
@@ -55,7 +54,6 @@ func NewFlowManager(token string) *FlowManager {
 
 func (st *FlowManager) initialize(token string) {
 	st.token = b64.StdEncoding.EncodeToString([]byte(token))
-	st.mpByID = make(map[string]Flow)
 }
 
 func (st *FlowManager) SetToken(token string) {
@@ -90,17 +88,7 @@ func (st *FlowManager) GetFlows() ([]Flow, error) {
 	// save the flows
 	st.flows = flows
 
-	// save the flows by ID
-	st.assignFlowsById(flows)
-
 	return flows, nil
-}
-
-// assignFlowsById assigns <ID,flow> to st.mpByID
-func (st *FlowManager) assignFlowsById(flows []Flow) {
-	for i := 0; i < len(flows); i++ {
-		st.mpByID[flows[i].ID] = flows[i]
-	}
 }
 
 // GetByName returns the Flow matching the name. Regular expressions are used to do the match.
