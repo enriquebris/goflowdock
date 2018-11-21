@@ -6,10 +6,11 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"regexp"
 	"time"
 )
 
-type Flows []struct {
+type Flow struct {
 	ID                string    `json:"id"`
 	Name              string    `json:"name"`
 	ParameterizedName string    `json:"parameterized_name"`
@@ -41,6 +42,7 @@ type Flows []struct {
 
 type FlowManager struct {
 	token string
+	flows []Flow
 }
 
 func NewFlowManager(token string) *FlowManager {
@@ -59,7 +61,7 @@ func (st *FlowManager) SetToken(token string) {
 }
 
 // GetFlows read and returns all visible flows (based on the API token).
-func (st *FlowManager) GetFlows() (Flows, error) {
+func (st *FlowManager) GetFlows() ([]Flow, error) {
 	request, err := http.NewRequest("GET", URLFlows, nil)
 	request.Header.Add("Authorization", fmt.Sprintf("Basic %v", st.token))
 
@@ -77,11 +79,32 @@ func (st *FlowManager) GetFlows() (Flows, error) {
 	buf.ReadFrom(response.Body)
 	s := buf.String()
 
-	var flows Flows
+	var flows []Flow
 	err = json.Unmarshal([]byte(s), &flows)
 	if err != nil {
 		return nil, err
 	}
 
+	// save the flows
+	st.flows = flows
+
 	return flows, nil
+}
+
+// GetByName returns the Flow matching the name. Regular expressions are used to do the match.
+// It returns error if no any Flow matches the given name.
+func (st *FlowManager) GetByName(name string) (Flow, error) {
+	r, err := regexp.Compile(name)
+	if err != nil {
+		return Flow{}, err
+	}
+
+	// search over all flow names / parameterized names
+	for i := 0; i < len(st.flows); i++ {
+		if r.MatchString(st.flows[i].Name) || r.MatchString(st.flows[i].ParameterizedName) {
+			return st.flows[i], nil
+		}
+	}
+
+	return Flow{}, fmt.Errorf("No match for '%v'", name)
 }

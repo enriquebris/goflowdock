@@ -5,16 +5,13 @@ import (
 	b64 "encoding/base64"
 	"encoding/json"
 	"fmt"
-	"log"
 	"net/http"
-	"regexp"
-	"strings"
 	"time"
 )
 
 // A Flowdock entry structure
 // Each streamed response will be transformed into an event
-type Entry struct {
+type EntryOld struct {
 	Event       string    `json:"event"`
 	Tags        []string  `json:"tags"`
 	Uuid        string    `json:"uuid"`
@@ -30,9 +27,41 @@ type Entry struct {
 	ThreadId    string    `json:"thread_id,omitempty"`
 }
 
+type Entry struct {
+	ThreadID string        `json:"thread_id,omitempty"`
+	Event    string        `json:"event"`
+	Tags     []interface{} `json:"tags,omitempty"`
+	UUID     string        `json:"uuid"`
+	Thread   struct {
+		Body             string        `json:"body"`
+		ExternalURL      interface{}   `json:"external_url"`
+		ExternalComments int           `json:"external_comments"`
+		Activities       int           `json:"activities"`
+		ID               string        `json:"id"`
+		Flow             string        `json:"flow"`
+		Status           interface{}   `json:"status"`
+		Fields           []interface{} `json:"fields"`
+		Actions          []interface{} `json:"actions"`
+		CreatedAt        int64         `json:"created_at"`
+		Title            string        `json:"title"`
+		UpdatedAt        time.Time     `json:"updated_at"`
+		InitialMessage   int           `json:"initial_message"`
+		InternalComments int           `json:"internal_comments"`
+	} `json:"thread,omitempty"`
+	ID             int           `json:"id"`
+	Flow           string        `json:"flow"`
+	Content        string        `json:"content"`
+	Sent           int64         `json:"sent"`
+	App            string        `json:"app"`
+	CreatedAt      time.Time     `json:"created_at"`
+	Attachments    []interface{} `json:"attachments"`
+	EmojiReactions struct {
+	} `json:"emojiReactions,omitempty"`
+	User string `json:"user"`
+}
+
 type StreamManager struct {
 	authToken string
-	commands  []CMD
 	errorChan chan error
 }
 
@@ -45,39 +74,10 @@ func NewStreamManager(authToken string, errorChan chan error) *StreamManager {
 
 func (st *StreamManager) initialize(authToken string, errorChan chan error) {
 	st.authToken = b64.StdEncoding.EncodeToString([]byte(authToken))
-	st.commands = make([]CMD, 0)
 	st.errorChan = errorChan
 }
 
-func (st *StreamManager) AddCommand(cmd CMD) error {
-	// compile && save the regex pattern
-	if cmd.PatternType == CMDTypeRegex {
-		// compile the regex patterns
-		for i := 0; i < len(cmd.Pattern); i++ {
-			compiledPattern, err := regexp.Compile(cmd.Pattern[i])
-			if err != nil {
-				return err
-			}
-
-			// save the compiled regex pattern
-			cmd.addCompiledRegex(compiledPattern)
-		}
-	}
-
-	if cmd.PatternType == CMDTypeWord {
-		// lowercase patterns
-		for i := 0; i < len(cmd.Pattern); i++ {
-			cmd.Pattern[i] = strings.ToLower(cmd.Pattern[i])
-		}
-	}
-
-	// save the command
-	st.commands = append(st.commands, cmd)
-
-	return nil
-}
-
-func (st *StreamManager) Listen(streamURL string) error {
+func (st *StreamManager) Listen(streamURL string, inputHandler func(entry Entry)) error {
 	request, err := http.NewRequest("GET", streamURL, nil)
 	if err != nil {
 		return err
@@ -106,175 +106,15 @@ func (st *StreamManager) Listen(streamURL string) error {
 		var entry Entry
 		err = json.Unmarshal(line, &entry)
 
-		cmd, pattern, handlerType, cmdContent, extraData, err := st.matchCMDs(st.commands, entry.Content)
-		if err != nil {
+		if err == nil {
+			// call input handler
+			inputHandler(entry)
+		} else {
 			if st.errorChan != nil {
 				st.errorChan <- err
 			}
-		} else {
-			switch handlerType {
-			case CMDHandlerTypeDefault:
-				if cmd.Handler != nil {
-					cmd.Handler(cmd, pattern, entry, cmdContent, extraData, handlerType)
-				}
-
-			case CMDHandlerTypeError:
-				if cmd.HandlerError != nil {
-					cmd.HandlerError(cmd, pattern, entry, cmdContent, extraData, handlerType)
-				}
-
-			case CMDHandlerTypeParams:
-				if cmd.HandlerParams != nil {
-					cmd.HandlerParams(cmd, pattern, entry, cmdContent, extraData, handlerType)
-				}
-
-			case CMDHandlerTypeParamsWrongType:
-				if cmd.HandlerParamsWrongType != nil {
-					cmd.HandlerParamsWrongType(cmd, pattern, entry, cmdContent, extraData, handlerType)
-				}
-
-			case CMDHandlerTypeParamsMissing:
-				if cmd.HandlerParamsMissing != nil {
-					cmd.HandlerParamsMissing(cmd, pattern, entry, cmdContent, extraData, handlerType)
-				}
-
-			case CMDHandlerTypeParamsExtra:
-				if cmd.HandlerParamsExtra != nil {
-					cmd.HandlerParamsExtra(cmd, pattern, entry, cmdContent, extraData, handlerType)
-				}
-
-			default:
-				log.Printf("Unknown CMDHandlerType: %v", handlerType)
-			}
 		}
 	}
-}
 
-// matchCMDs finds for the best CMD (command) match.
-// Returns CMD, bool, err
-// CMD					==> best match command
-// string				==> pattern that matches
-// string				==> CMD handler type true, which handler type should be used
-// string				==> content
-// map[string][string]	==> extra information related to the cmd
-// err		==> error
-func (st *StreamManager) matchCMDs(cmds []CMD, content string) (CMD, string, string, string, map[string]interface{}, error) {
-	content = strings.TrimSpace(content)
-	if content == "" {
-		return CMD{}, "", CMDHandlerTypeError, content, nil, NewCMDError(CMDErrorTypeNoCommand, fmt.Sprintf("no commands for '%v'", content))
-	}
-
-	// split the content into words separated by blank spaces
-	words := strings.Split(content, " ")
-
-	var (
-		cmd2ret      CMD
-		patternMatch string
-	)
-
-	for _, cmd := range cmds {
-		match := false
-		extraContent := ""
-
-		switch cmd.PatternType {
-		// regex
-		case CMDTypeRegex:
-			for i := 0; i < len(cmd.compiledRegex); i++ {
-				match = cmd.compiledRegex[i].MatchString(content)
-
-				if match {
-					// saved the pattern that matches
-					patternMatch = cmd.Pattern[i]
-					break
-					// TODO ::: get the extracontent from the regex
-				}
-			}
-
-		// first word
-		case CMDTypeWord:
-			for i := 0; i < len(cmd.Pattern); i++ {
-				match = strings.ToLower(words[0]) == cmd.Pattern[i]
-				if match {
-					// saved the pattern that matches
-					patternMatch = cmd.Pattern[i]
-					// extra content to keep parsing
-					extraContent = content[len(words[0]):]
-					break
-				}
-			}
-		}
-
-		if match {
-			cmd2ret = cmd
-
-			// get the extra content to parse (extra content == content - cmd)
-			extraContent = strings.TrimSpace(extraContent)
-
-			checkForParams := true
-
-			// check for subCommands
-			if len(cmd.SubCommands) > 0 {
-				// do not check for params
-				checkForParams = false
-				extraCmd2ret, patternMatch2, useHandler, content2, extraData, err2 := st.matchCMDs(cmd.SubCommands, extraContent)
-				if err2 == nil {
-					return extraCmd2ret, patternMatch2, useHandler, content2, extraData, nil
-				}
-			}
-
-			// check for params
-			if checkForParams && len(cmd.Params) > 0 {
-				for i := 0; i < len(cmd.Params); i++ {
-					if i < len(words)-1 {
-						cmd.Params[i].Value = words[i+1]
-						// parameter type checking
-						if !cmd.Params[i].isExpectedType() {
-							// pass back the wrong param data
-							return cmd2ret, patternMatch, CMDHandlerTypeParamsWrongType, content, map[string]interface{}{
-								CMDExtraDataParametersIncorrectType: []CMDParam{cmd.Params[i]},
-							}, nil
-						}
-					} else {
-						// parameter required checking
-						if cmd.Params[i].Required {
-							// return insufficient parameters handler
-							// pass back the missing param data
-							return cmd2ret, patternMatch, CMDHandlerTypeParamsMissing, content, map[string]interface{}{
-								CMDExtraDataParametersMissing: []CMDParam{cmd.Params[i]},
-							}, nil
-						}
-					}
-				}
-
-				// more parameters than expected
-				if len(words)-1 > len(cmd.Params) {
-					// pass back the extra params
-					extraParams := make([]CMDParam, 0)
-					for c := len(cmd.Params) + 1; c < len(words); c++ {
-						extraParams = append(extraParams, CMDParam{
-							Value: words[c],
-						})
-					}
-
-					// return extra parameters handler
-					return cmd2ret, patternMatch, CMDHandlerTypeParamsExtra, content, map[string]interface{}{
-						CMDExtraDataParametersExtra: extraParams,
-					}, nil
-				}
-
-				return cmd2ret, patternMatch, CMDHandlerTypeParams, content, nil, nil
-			}
-
-			// return CMD if there is no more content to parse
-			if extraContent == "" {
-				return cmd2ret, patternMatch, CMDHandlerTypeDefault, content, nil, nil
-			}
-
-			// use errorHandler instead of handler
-			return cmd2ret, patternMatch, CMDHandlerTypeError, extraContent, nil, nil
-		}
-
-	}
-
-	return CMD{}, "", CMDHandlerTypeError, content, nil, NewCMDError(CMDErrorTypeNoCommand, fmt.Sprintf("no commands for '%v'", content))
+	return nil
 }
