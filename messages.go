@@ -14,7 +14,7 @@ type MessageData struct {
 	Content          string   `json:"content"`
 	Tags             []string `json:"tags,omitempty"`
 	ExternalUserName string   `json:"external_user_name"`
-	ThreadID         string   `json:"thread_id"`
+	ThreadID         string   `json:"thread_id,omitempty"`
 }
 
 type MessageManager struct {
