@@ -1,4 +1,4 @@
-### Gett all flows
+### Get all flows (rooms)
 ```go
 package main
 
